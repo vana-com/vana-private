@@ -17,7 +17,7 @@ This guide will help you set up a validator node for the Vana Proof-of-Stake (Po
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/vana-com/vana.git
+   git clone https://github.com/vana-com/vana-private.git
    cd vana
    ```
 
