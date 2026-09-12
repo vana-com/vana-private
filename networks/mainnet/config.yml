@@ -55,6 +55,33 @@ ELECTRA_FORK_EPOCH: 18446744073709551615
 # # 2 * 35000 * 10**9 (= 70,000,000,000,000)
 # MAX_PER_EPOCH_ACTIVATION_EXIT_CHURN_LIMIT: 70000000000000
 
+# Fulu (EIP-7594 / PeerDAS) and Gloas (EIP-7732 / ePBS).
+# Required from Prysm v7 onward. This file sets PRESET_BASE: mainnet, so any key it
+# does not define is inherited from Ethereum mainnet -- and the inherited versions
+# (0x06000000 / 0x07000000) collide with Ethereum's own registered config, so the
+# node refuses to start:
+#   version 0x06000000 for fork fulu in config vana conflicts with existing
+#   config named=mainnet
+# Both are disabled with a far-future epoch, so the versions are never used as
+# signing domains and neither fork enters the fork schedule. Verified on a live
+# mainnet node: genesis_validators_root and the Deneb fork digest are unchanged.
+# These supersede the commented-out EIP7594_/EIP7732_ stubs below.
+FULU_FORK_VERSION: 0x20000095
+FULU_FORK_EPOCH: 18446744073709551615
+GLOAS_FORK_VERSION: 0x20000096
+GLOAS_FORK_EPOCH: 18446744073709551615
+
+# Blob-parameter-only (BPO) fork schedule, deliberately empty.
+# An absent key inherits Ethereum mainnet's BPO forks at epochs 412672 and 419072.
+# A BPO entry only gets a distinct fork digest when its epoch is at or after
+# FULU_FORK_EPOCH; Fulu is disabled here, so those entries instead reuse the
+# preceding fork's digest. Prysm's allTopics() walks the fork schedule and stops at
+# the first repeated digest, so the gossip allowlist never reaches Capella/Deneb and
+# the node then refuses every gossip topic ("topic is not allowed by the
+# subscription filter"). It still starts and follows the chain by range sync, so the
+# failure is quiet: no gossip participation and a drifting sync distance.
+BLOB_SCHEDULE: []
+
 # # EIP7594 - Peerdas
 # EIP7594_FORK_VERSION: 0x60000039
 # EIP7594_FORK_EPOCH: 18446744073709551615
@@ -75,6 +102,11 @@ MAX_VALIDATORS_PER_COMMITTEE: 20
 # Time parameters
 # ---------------------------------------------------------------
 SECONDS_PER_SLOT: 6
+# Prysm v7+ reads SLOT_DURATION_MS in preference to SECONDS_PER_SLOT for all slot
+# timing. Left unset it inherits Ethereum mainnet's 12000, so the node does 12s/slot
+# arithmetic on a 6s chain and dies with "invalid payload timestamp" -- while
+# /eth/v1/config/spec still reports SECONDS_PER_SLOT: 6, which makes it look correct.
+SLOT_DURATION_MS: 6000
 SLOTS_PER_EPOCH: 8
 EPOCHS_PER_SYNC_COMMITTEE_PERIOD: 8
 ETH1_FOLLOW_DISTANCE: 32
@@ -103,7 +135,31 @@ EJECTION_BALANCE: 17500000000000
 # ---------------------------------------------------------------
 DEPOSIT_CHAIN_ID: 1480
 DEPOSIT_NETWORK_ID: 1480
-DEPOSIT_CONTRACT_ADDRESS: 0x17BbE91c315Bf14f38F6D35052a827cadfFe184e
+
+# The deposit contract changes at block 10,229,958.
+#
+# DEPOSIT_CONTRACT_ADDRESS is the contract that is authoritative from the switch block onward.
+# RETIRED_DEPOSIT_CONTRACT_ADDRESS is the one that holds the deposit history before it -- its logs
+# are still part of this chain's history and are still scanned, so a node syncing from genesis
+# builds the same deposit trie it always did.
+#
+# The new contract was deployed (block 10,099,568) already seeded with the retired contract's final
+# state: deposit count 32 and root 0x60dff8f6a92d68799e7653acdcefa253a1c2603b4dd071d8265491b465172401,
+# with all 32 branch slots copied. The merkle index therefore continues across the boundary rather
+# than restarting at 0, which is what lets the switch happen without rebuilding any node's deposit
+# history. Both values were verified on chain against the retired contract.
+#
+# Below the switch block a node scans only the retired contract; at and above it, only the current
+# one. A batch that straddles the boundary is split into two queries, one per contract.
+#
+# REQUIRES the Vana build of Prysm -- see the beacon service in docker-compose.yml. Upstream Prysm
+# does not know these two keys, so it would scan the current contract for all of history, find no
+# deposits below the switch block, and reject the first deposit above it with an incorrect merkle
+# index. It also refuses to start at all once DEPOSIT_CONTRACT_ADDRESS no longer matches the
+# address recorded in its own database.
+DEPOSIT_CONTRACT_ADDRESS: 0xB98aafa6684aef18AEf518772F01F5aE0DA5eA4C
+RETIRED_DEPOSIT_CONTRACT_ADDRESS: 0x17BbE91c315Bf14f38F6D35052a827cadfFe184e
+DEPOSIT_CONTRACT_SWITCH_BLOCK: 10229958
 
 # Gwei values
 # ---------------------------------------------------------------
