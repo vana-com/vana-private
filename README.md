@@ -195,9 +195,69 @@ Edit the `.env` file to configure your node. Key variables include:
 - `NETWORK`: Choose between `moksha` (testnet) or `mainnet`
 - `CHAIN_ID`: Network chain ID
 - `EXTERNAL_IP`: Your node's external IP address
+- `BEACON_IMAGE`: The beacon node image — Vana's build of Prysm (see below)
 - Various port configurations for different services
 
 Ensure all required variables are set correctly before proceeding.
+
+### Deposit contract switch (mainnet)
+
+Mainnet moves to a new deposit contract at **block 10,229,958**:
+
+| | |
+|---|---|
+| Current contract (from the switch block onward) | `0xB98aafa6684aef18AEf518772F01F5aE0DA5eA4C` |
+| Retired contract (holds the history before it) | `0x17BbE91c315Bf14f38F6D35052a827cadfFe184e` |
+| Switch block | `10229958` |
+
+The new contract was deployed already seeded with the retired contract's final state, so the deposit
+index and merkle tree continue across the boundary. Nothing is rebuilt and no node resyncs: below
+the switch block a node scans the retired contract, at and above it the current one. A node syncing
+from genesis still reconstructs the same deposit history.
+
+**This requires Vana's build of Prysm**, `ghcr.io/vana-com/prysm-beacon-chain`, which is the default
+for the `beacon` service and is pinned by `BEACON_IMAGE` in `.env`. Upstream Prysm does not
+understand the two new chain-config keys and will not run against this config.
+
+Only the beacon node is forked. The validator and prysmctl stay on upstream Prysm, now `v7.1.8` via
+`PRYSM_VERSION` — the same release the Vana build is based on. The deposit contract switch is
+entirely beacon-node work, and the upstream validator reads this config file fine; it reports the
+two new keys as unknown fields in the same non-fatal log line it already emits for `BLOB_SCHEDULE`,
+and applies everything else.
+
+Everything needed is already in `networks/mainnet/config.yml` and `docker-compose.yml`, so upgrading
+is an image change:
+
+```bash
+docker compose pull beacon validator
+docker compose up -d beacon validator
+```
+
+> **Note**: `PRYSM_VERSION` moves from `v5.1.0` to `v7.1.8`, so the validator crosses two major
+> versions. Back up your validator database first — see
+> [Backup and Restore](#backup-and-restore) — since the slashing protection history lives there
+> and downgrading is not supported.
+
+Two things to know when upgrading a node that has already been running:
+
+- Your database records the deposit contract address it last ran with, and the node refuses to
+  start when that no longer matches the config (`database contract is 0x17bbe91c... but tried to
+  run with 0xb98aafa6...`). The `beacon` service passes `--clear-deposit-contract` to handle this.
+  It clears only that record and writes it again from the config on the same start — all other data
+  is kept, so this is **not** a resync.
+- If your node has already scanned past the switch block, it rewinds its deposit log scan once and
+  logs `Rewinding deposit log scan`. This is expected, and happens only once.
+
+To confirm the switch is active, look for this line as the scan crosses the boundary:
+
+```
+Deposit log scan crossing the deposit contract switch block
+  retiredContract=0x17BbE9... currentContract=0xB98aaf... switchBlock=10229958
+```
+
+Deposits submitted after the switch go to the current contract, so `DEPOSIT_CONTRACT_ADDRESS` in
+`.env` must be `0xB98aafa6684aef18AEf518772F01F5aE0DA5eA4C`. The retired contract no longer accepts
+deposits.
 
 ## Verifying Your Setup
 
@@ -368,7 +428,10 @@ After generating validator keys and before starting your validator, you need to 
 
 1. Ensure you have the following environment variables set in your `.env` file:
    - `DEPOSIT_RPC_URL`: The RPC URL for the network on which you're submitting deposits
-   - `DEPOSIT_CONTRACT_ADDRESS`: The address of the deposit contract
+   - `DEPOSIT_CONTRACT_ADDRESS`: The address of the deposit contract. On mainnet this is the
+     current contract, `0xB98aafa6684aef18AEf518772F01F5aE0DA5eA4C` — see
+     [Deposit contract switch](#deposit-contract-switch-mainnet). It must match
+     `DEPOSIT_CONTRACT_ADDRESS` in `networks/mainnet/config.yml`.
 
 2. Run the deposit submission process with the private key of the account funding the deposits:
    ```bash

@@ -221,7 +221,12 @@ services:
 
   beacon:
     <<: *default-logging
-    image: gcr.io/prysmaticlabs/prysm/beacon-chain:${PRYSM_VERSION:-latest}
+    # Vana's build of Prysm, not upstream. networks/mainnet/config.yml declares
+    # RETIRED_DEPOSIT_CONTRACT_ADDRESS and DEPOSIT_CONTRACT_SWITCH_BLOCK, which only this build
+    # understands; on an upstream image the node refuses to start once the configured deposit
+    # contract differs from the one recorded in its database. Only the beacon node is forked --
+    # the validator and prysmctl images below stay upstream.
+    image: ${BEACON_IMAGE:-ghcr.io/vana-com/prysm-beacon-chain:v7.1.8-vega.1}
     container_name: beacon
     volumes:
       - ./data/jwt.hex:/vana/jwt.hex:ro
@@ -261,7 +266,27 @@ services:
       - --datadir=/vana/consensus/beacondata
       - --genesis-state=/vana/consensus/genesis.ssz
       - --chain-config-file=/vana/consensus/config.yml
+      # Where the deposit log scan starts. It must stay below the deposit contract switch block,
+      # or the retired contract's deposits are never scanned and the node refuses to start.
       - --contract-deployment-block=0
+      # Deposit contract switch. The values come from networks/${NETWORK}/config.yml and nothing
+      # needs to be set here; these two flags override that file and exist for a node that has to
+      # differ from the shipped config, e.g. when testing a switch block before it is released.
+      # - --retired-deposit-contract=0x17BbE91c315Bf14f38F6D35052a827cadfFe184e
+      # - --deposit-contract-switch-block=10229958
+      #
+      # Required when upgrading a node that has already run against the retired contract. The
+      # database records the deposit contract address it last ran with, and the node refuses to
+      # start when the configured address differs:
+      #   database contract is 0x17bbe91c... but tried to run with 0xb98aafa6...
+      # This clears that record -- and the record of which switch the database has been migrated
+      # for -- then re-records the configured address on the same start. Everything else in the
+      # database is kept, so this is not a resync, and it is a no-op once there is nothing stale to
+      # clear. It is left on so that an operator upgrading across the switch does not have to edit
+      # this file; the cost is that the migration marker is cleared on every start, so the check
+      # that refuses a switch block different from the one already migrated for does not fire.
+      # Remove this line to get that check back once the fleet is past the switch.
+      - --clear-deposit-contract
       - --execution-endpoint=http://geth:${AUTHRPC_PORT:-8551}
       - --jwt-secret=/vana/jwt.hex
       - --rpc-host=0.0.0.0
@@ -584,7 +609,9 @@ services:
 
   beacon-restore:
     <<: *default-logging
-    image: gcr.io/prysmaticlabs/prysm/beacon-chain:${PRYSM_VERSION:-latest}
+    # Same image as the beacon service: this writes the database that service then opens, so the
+    # two must agree on its format.
+    image: ${BEACON_IMAGE:-ghcr.io/vana-com/prysm-beacon-chain:v7.1.8-vega.1}
     container_name: beacon-restore
     volumes:
       - ./data/consensus:/vana/consensus

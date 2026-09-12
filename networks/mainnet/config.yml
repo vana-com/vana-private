@@ -135,7 +135,31 @@ EJECTION_BALANCE: 17500000000000
 # ---------------------------------------------------------------
 DEPOSIT_CHAIN_ID: 1480
 DEPOSIT_NETWORK_ID: 1480
-DEPOSIT_CONTRACT_ADDRESS: 0x17BbE91c315Bf14f38F6D35052a827cadfFe184e
+
+# The deposit contract changes at block 10,229,958.
+#
+# DEPOSIT_CONTRACT_ADDRESS is the contract that is authoritative from the switch block onward.
+# RETIRED_DEPOSIT_CONTRACT_ADDRESS is the one that holds the deposit history before it -- its logs
+# are still part of this chain's history and are still scanned, so a node syncing from genesis
+# builds the same deposit trie it always did.
+#
+# The new contract was deployed (block 10,099,568) already seeded with the retired contract's final
+# state: deposit count 32 and root 0x60dff8f6a92d68799e7653acdcefa253a1c2603b4dd071d8265491b465172401,
+# with all 32 branch slots copied. The merkle index therefore continues across the boundary rather
+# than restarting at 0, which is what lets the switch happen without rebuilding any node's deposit
+# history. Both values were verified on chain against the retired contract.
+#
+# Below the switch block a node scans only the retired contract; at and above it, only the current
+# one. A batch that straddles the boundary is split into two queries, one per contract.
+#
+# REQUIRES the Vana build of Prysm -- see the beacon service in docker-compose.yml. Upstream Prysm
+# does not know these two keys, so it would scan the current contract for all of history, find no
+# deposits below the switch block, and reject the first deposit above it with an incorrect merkle
+# index. It also refuses to start at all once DEPOSIT_CONTRACT_ADDRESS no longer matches the
+# address recorded in its own database.
+DEPOSIT_CONTRACT_ADDRESS: 0xB98aafa6684aef18AEf518772F01F5aE0DA5eA4C
+RETIRED_DEPOSIT_CONTRACT_ADDRESS: 0x17BbE91c315Bf14f38F6D35052a827cadfFe184e
+DEPOSIT_CONTRACT_SWITCH_BLOCK: 10229958
 
 # Gwei values
 # ---------------------------------------------------------------
